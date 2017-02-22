@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"log"
 	"os"
@@ -16,8 +15,10 @@ const (
 	AppToken string = "APP_TOKEN"
 )
 
-func getUserPosts(usertoken string) ([]FBUserPost, error) {
-	res, err := fb.Get("/me/posts", fb.Params{"access_token": usertoken, "fields": "link,message,id"})
+func getUserPosts(session *fb.Session) <-chan FBResult {
+	ch := make(chan FBResult)
+	res, err := session.Get("/me/posts", fb.Params{"fields": "link,message,id"})
+	paging, err := res.Paging(session)
 	if err != nil {
 		// err can be an facebook API error.
 		// if so, the Error struct contains error details.
@@ -26,26 +27,26 @@ func getUserPosts(usertoken string) ([]FBUserPost, error) {
 				e.Message, e.Type, e.Code, e.ErrorSubcode)
 		}
 	}
-	data, ok := res["data"]
-	if !ok {
-		return nil, errors.New("data not found")
-	}
 
-	d, ok := data.([]interface{})
-	if !ok {
-		return nil, errors.New("Wrong data format")
-	}
-
-	r := make([]FBUserPost, len(d))
-	for i := range d {
-		v, ok := d[i].(map[string]interface{})
-		if !ok {
-			return nil, errors.New("Wrong data format")
+	go func() {
+		defer close(ch)
+		for {
+			if err != nil {
+				ch <- FBResult{post: *new(FBUserPost), err: err}
+			} else {
+				data := paging.Data()
+				for i := range data {
+					ch <- FBResult{post: FBUserPost{id: getStringFromMap(data[i], "id"), message: getStringFromMap(data[i], "message"), link: getStringFromMap(data[i], "link")}, err: nil}
+				}
+			}
+			noMore, err := paging.Next()
+			if noMore {
+				break
+			}
+			err = err
 		}
-		r[i] = FBUserPost{link: getStringFromMap(v, "link"), message: getStringFromMap(v, "message"), id: getStringFromMap(v, "id")}
-	}
-
-	return r, err
+	}()
+	return ch
 }
 
 func getStringFromMap(m map[string]interface{}, key string) string {
@@ -62,6 +63,12 @@ type FBUserPost struct {
 	id      string
 }
 
+//FBResult User post or error
+type FBResult struct {
+	post FBUserPost
+	err  error
+}
+
 //FBSettings FB API params
 type FBSettings struct {
 	appid string
@@ -69,23 +76,27 @@ type FBSettings struct {
 }
 
 //GetFBSettings read env and returns FBSettings
-func GetFBSettings() (*FBSettings, error) {
+func GetFBSettings() *FBSettings {
 	settings := new(FBSettings)
 	settings.appid = os.Getenv(AppID)
 	settings.token = os.Getenv(AppToken)
-	return settings, nil
+	return settings
 }
 
 var usertoken = flag.String("usertoken", "", "user token")
 
 func main() {
 	flag.Parse()
-	res, err := getUserPosts(*usertoken)
-	if err != nil {
-		log.Fatal(err)
+	settings := GetFBSettings()
+	app := fb.New(settings.appid, settings.token)
+	session := app.Session(*usertoken)
+	log.Println("start")
+	for r := range getUserPosts(session) {
+		if r.err != nil {
+			log.Printf("got error %s", r.err)
+		} else {
+			log.Printf("result %s", r)
+		}
 	}
-
-	for i := range res {
-		log.Printf("result %s", res[i])
-	}
+	log.Println("end")
 }
