@@ -17,8 +17,8 @@ const (
 
 func getUserPosts(session *fb.Session) <-chan FBResult {
 	ch := make(chan FBResult)
+	var paging *fb.PagingResult
 	res, err := session.Get("/me/posts", fb.Params{"fields": "link,message,id"})
-	paging, err := res.Paging(session)
 	if err != nil {
 		// err can be an facebook API error.
 		// if so, the Error struct contains error details.
@@ -26,24 +26,23 @@ func getUserPosts(session *fb.Session) <-chan FBResult {
 			log.Printf("facebook error. [message:%v] [type:%v] [code:%v] [subcode:%v]",
 				e.Message, e.Type, e.Code, e.ErrorSubcode)
 		}
+	} else {
+		paging, err = res.Paging(session)
 	}
-
 	go func() {
 		defer close(ch)
-		for {
-			if err != nil {
-				ch <- FBResult{post: *new(FBUserPost), err: err}
-			} else {
+		noMore := false
+		for !noMore {
+			if err == nil {
 				data := paging.Data()
 				for i := range data {
 					ch <- FBResult{post: FBUserPost{id: getStringFromMap(data[i], "id"), message: getStringFromMap(data[i], "message"), link: getStringFromMap(data[i], "link")}, err: nil}
 				}
-			}
-			noMore, err := paging.Next()
-			if noMore {
+				noMore, err = paging.Next()
+			} else {
+				ch <- FBResult{post: *new(FBUserPost), err: err}
 				break
 			}
-			err = err
 		}
 	}()
 	return ch
@@ -90,7 +89,6 @@ func main() {
 	settings := GetFBSettings()
 	app := fb.New(settings.appid, settings.token)
 	session := app.Session(*usertoken)
-	log.Println("start")
 	for r := range getUserPosts(session) {
 		if r.err != nil {
 			log.Printf("got error %s", r.err)
@@ -98,5 +96,4 @@ func main() {
 			log.Printf("result %s", r)
 		}
 	}
-	log.Println("end")
 }
