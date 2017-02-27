@@ -1,7 +1,6 @@
-package main
+package fbutil
 
 import (
-	"flag"
 	"log"
 	"os"
 
@@ -14,6 +13,18 @@ const (
 	//AppToken FB app token
 	AppToken string = "APP_TOKEN"
 )
+
+// GetPosts return channel of FBResults
+func GetPosts(usertoken *string) <-chan FBResult {
+	app := getApp()
+	session := app.Session(*usertoken)
+	return getUserPosts(session)
+}
+
+func getApp() *fb.App {
+	settings := GetFBSettings()
+	return fb.New(settings.appid, settings.token)
+}
 
 func getUserPosts(session *fb.Session) <-chan FBResult {
 	ch := make(chan FBResult)
@@ -36,11 +47,11 @@ func getUserPosts(session *fb.Session) <-chan FBResult {
 			if err == nil {
 				data := paging.Data()
 				for i := range data {
-					ch <- FBResult{post: FBUserPost{id: getStringFromMap(data[i], "id"), message: getStringFromMap(data[i], "message"), link: getStringFromMap(data[i], "link")}, err: nil}
+					ch <- FBResult{Post: FBUserPost{id: getStringFromMap(data[i], "id"), message: getStringFromMap(data[i], "message"), link: getStringFromMap(data[i], "link")}, Err: nil}
 				}
 				noMore, err = paging.Next()
 			} else {
-				ch <- FBResult{post: *new(FBUserPost), err: err}
+				ch <- FBResult{Post: *new(FBUserPost), Err: err}
 				break
 			}
 		}
@@ -64,8 +75,8 @@ type FBUserPost struct {
 
 //FBResult User post or error
 type FBResult struct {
-	post FBUserPost
-	err  error
+	Post FBUserPost
+	Err  error
 }
 
 //FBSettings FB API params
@@ -80,20 +91,4 @@ func GetFBSettings() *FBSettings {
 	settings.appid = os.Getenv(AppID)
 	settings.token = os.Getenv(AppToken)
 	return settings
-}
-
-var usertoken = flag.String("usertoken", "", "user token")
-
-func main() {
-	flag.Parse()
-	settings := GetFBSettings()
-	app := fb.New(settings.appid, settings.token)
-	session := app.Session(*usertoken)
-	for r := range getUserPosts(session) {
-		if r.err != nil {
-			log.Printf("got error %s", r.err)
-		} else {
-			log.Printf("result %s", r)
-		}
-	}
 }
